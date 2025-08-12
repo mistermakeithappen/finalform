@@ -3,6 +3,7 @@
 import React from 'react'
 import { FormField, FieldWidth } from '@/lib/types/form'
 import { sanitizeFieldKey } from '@/lib/utils/field-key-validator'
+import { generateFieldKey } from '@/lib/utils/field-utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -31,6 +32,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { ConditionalLogicBuilder } from './ConditionalLogicBuilder'
 import { FormulaBuilder } from './FormulaBuilder'
+import { AIFormulaBuilder } from './AIFormulaBuilder'
 import { FieldGroupManager } from './FieldGroupManager'
 import { PageNavigationBuilder } from '../form-builder/PageNavigationBuilder'
 
@@ -309,6 +311,8 @@ function renderDefaultValueInput(field: FormField, handleChange: (key: string, v
 }
 
 export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: EnhancedPropertyPanelV2Props) {
+  const [isEditingKey, setIsEditingKey] = React.useState(false)
+  
   const handleChange = (key: string, value: any) => {
     // Sanitize field key to only allow valid characters
     if (key === 'key' && typeof value === 'string') {
@@ -434,33 +438,80 @@ export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: En
                     </p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="field-label" className="text-sm">Label</Label>
-                    <Input
-                      id="field-label"
-                      value={field.label || ''}
-                      onChange={(e) => handleChange('label', e.target.value)}
-                      placeholder="Enter field label"
-                      className="h-9"
-                    />
-                  </div>
+                  {/* Hide label field for display-only field types */}
+                  {!['headline', 'html', 'image', 'pagebreak'].includes(field.type) && (
+                    <div className="space-y-2">
+                      <Label htmlFor="field-label" className="text-sm">Label</Label>
+                      <Input
+                        id="field-label"
+                        value={field.label || ''}
+                        onChange={(e) => {
+                          handleChange('label', e.target.value)
+                          // Also update the key based on the new label
+                          const existingKeys = fields.filter(f => f.id !== field.id).map(f => f.key)
+                          const newKey = generateFieldKey(e.target.value || field.type, existingKeys)
+                          handleChange('key', newKey)
+                        }}
+                        placeholder="Enter field label"
+                        className="h-9"
+                      />
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label htmlFor="field-key" className="text-sm">
                       Field Key
                       <span className="text-xs text-muted-foreground ml-2">
-                        (Used in form data)
+                        (Auto-generated for webhooks & UTM params)
                       </span>
                     </Label>
-                    <Input
-                      id="field-key"
-                      value={field.key || ''}
-                      onChange={(e) => handleChange('key', e.target.value)}
-                      placeholder="field_key"
-                      className="h-9 font-mono text-sm"
-                    />
+                    <div className="flex gap-2">
+                      <Input
+                        id="field-key"
+                        value={field.key || ''}
+                        readOnly={!isEditingKey}
+                        onChange={(e) => {
+                          if (isEditingKey) {
+                            const sanitized = sanitizeFieldKey(e.target.value)
+                            handleChange('key', sanitized)
+                          }
+                        }}
+                        className={cn(
+                          "h-9 font-mono text-sm",
+                          isEditingKey ? "" : "bg-muted/50"
+                        )}
+                        title={isEditingKey 
+                          ? "Edit the field key manually" 
+                          : "Field key is automatically generated from the field label/content"
+                        }
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => setIsEditingKey(!isEditingKey)}
+                        title={isEditingKey ? "Lock field key" : "Edit field key manually"}
+                      >
+                        {isEditingKey ? "Lock" : "Edit"}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => {
+                          navigator.clipboard.writeText(field.key || '')
+                        }}
+                        title="Copy field key to clipboard"
+                      >
+                        Copy
+                      </Button>
+                    </div>
                     <p className="text-xs text-muted-foreground">
-                      Only lowercase letters, numbers, underscores, and hyphens allowed
+                      {isEditingKey 
+                        ? "You are manually editing the field key. Click 'Lock' to return to auto-generation."
+                        : "This key is automatically generated from the field label and updates when the label changes."}
                     </p>
                   </div>
 
@@ -650,7 +701,15 @@ export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: En
                       <Input
                         id="alt-text"
                         value={(field as any).altText || ''}
-                        onChange={(e) => handleChange('altText', e.target.value)}
+                        onChange={(e) => {
+                          handleChange('altText', e.target.value)
+                          // Also update the label to match the alt text
+                          handleChange('label', e.target.value)
+                          // Generate a sanitized key from the alt text
+                          const existingKeys = fields.filter(f => f.id !== field.id).map(f => f.key)
+                          const newKey = generateFieldKey(e.target.value || 'image', existingKeys)
+                          handleChange('key', newKey)
+                        }}
                         placeholder="Describe the image for accessibility"
                         className="h-9"
                       />
@@ -762,6 +821,41 @@ export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: En
                 </AccordionItem>
               )}
 
+              {/* HTML Settings */}
+              {field.type === 'html' && (
+                <AccordionItem value="html-settings" className="border-none">
+                  <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50">
+                    <span className="text-sm font-medium">HTML Settings</span>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-6 pb-6 space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="html-content" className="text-sm">HTML Content</Label>
+                      <Textarea
+                        id="html-content"
+                        value={(field as any).content || ''}
+                        onChange={(e) => {
+                          handleChange('content', e.target.value)
+                          // Extract text content for label (strip HTML tags)
+                          const textContent = e.target.value.replace(/<[^>]*>/g, '').slice(0, 50)
+                          const label = textContent || 'HTML Content'
+                          handleChange('label', label)
+                          // Generate a sanitized key from the content
+                          const existingKeys = fields.filter(f => f.id !== field.id).map(f => f.key)
+                          const newKey = generateFieldKey(label, existingKeys)
+                          handleChange('key', newKey)
+                        }}
+                        placeholder="Enter your HTML content"
+                        rows={6}
+                        className="font-mono text-xs"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Enter valid HTML. Be careful with scripts and styles.
+                      </p>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
               {/* Headline Settings */}
               {field.type === 'headline' && (
                 <AccordionItem value="headline-settings" className="border-none">
@@ -774,7 +868,15 @@ export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: En
                       <Input
                         id="headline-text"
                         value={field.text || ''}
-                        onChange={(e) => handleChange('text', e.target.value)}
+                        onChange={(e) => {
+                          handleChange('text', e.target.value)
+                          // Also update the label to match the text
+                          handleChange('label', e.target.value)
+                          // Generate a sanitized key from the text
+                          const existingKeys = fields.filter(f => f.id !== field.id).map(f => f.key)
+                          const newKey = generateFieldKey(e.target.value || 'headline', existingKeys)
+                          handleChange('key', newKey)
+                        }}
                         placeholder="Enter your headline"
                         className="h-9"
                       />
@@ -1507,6 +1609,27 @@ export function EnhancedPropertyPanelV2({ field, fields, onUpdate, onClose }: En
                       onChange={(value) => handleChange('calculation', value)}
                       fields={fields}
                       currentField={field}
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              )}
+
+              {/* AI Calculations */}
+              {(field.type === 'number' || field.type === 'currency' || field.type === 'text' || field.type === 'textarea') && (
+                <AccordionItem value="ai-calculations" className="border-none">
+                  <AccordionTrigger className="px-6 py-4 hover:no-underline hover:bg-muted/50">
+                    <span className="text-sm font-medium flex items-center gap-2">
+                      AI Calculations
+                      <Badge variant="secondary" className="text-xs">Beta</Badge>
+                    </span>
+                  </AccordionTrigger>
+                  <AccordionContent className="px-6 pb-6">
+                    <AIFormulaBuilder
+                      value={field.aiCalculation}
+                      onChange={(value) => handleChange('aiCalculation', value)}
+                      fields={fields}
+                      currentField={field}
+                      hasOpenAIKey={true} // This should be checked from org integrations
                     />
                   </AccordionContent>
                 </AccordionItem>

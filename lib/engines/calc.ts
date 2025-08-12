@@ -1,13 +1,17 @@
 import { Parser } from 'expr-eval'
-import { Calculation } from '@/lib/types/form'
+import { Calculation, AICalculation } from '@/lib/types/form'
 
 export class CalcEngine {
   private calculations: Calculation[]
+  private aiCalculations: AICalculation[]
   private parser: Parser
+  private aiCache: Map<string, any>
 
-  constructor(calculations: Calculation[]) {
+  constructor(calculations: Calculation[], aiCalculations: AICalculation[] = []) {
     this.calculations = calculations
+    this.aiCalculations = aiCalculations
     this.parser = new Parser()
+    this.aiCache = new Map()
     
     // Add custom functions
     this.parser.functions.sum = this.sum
@@ -21,7 +25,52 @@ export class CalcEngine {
     this.parser.functions.len = (arr: any[]) => arr?.length || 0
   }
 
-  evaluate(values: Record<string, any>): Record<string, any> {
+  async evaluate(values: Record<string, any>): Promise<Record<string, any>> {
+    const results: Record<string, any> = {}
+    
+    // First, handle traditional calculations
+    const sortedCalcs = this.sortByDependency(this.calculations)
+    
+    sortedCalcs.forEach(calc => {
+      try {
+        // Prepare variables for the formula
+        const variables = this.prepareVariables(values, results)
+        
+        // Parse and evaluate the formula
+        const expr = this.parser.parse(calc.formula)
+        const result = expr.evaluate(variables)
+        
+        // Apply outputs
+        calc.outputs.forEach(output => {
+          let formattedResult = result
+          
+          // Format the result based on output format
+          if (output.format === 'currency') {
+            formattedResult = this.formatCurrency(result)
+          } else if (output.format === 'percentage') {
+            formattedResult = `${(result * 100).toFixed(2)}%`
+          } else if (output.format === 'number') {
+            formattedResult = Number(result)
+          }
+          
+          results[output.target] = formattedResult
+        })
+      } catch (error) {
+        console.error(`Calculation error in ${calc.name}:`, error)
+        calc.outputs.forEach(output => {
+          results[output.target] = 0
+        })
+      }
+    })
+    
+    // Then handle AI calculations
+    await this.evaluateAICalculations(values, results)
+    
+    return results
+  }
+
+  // Synchronous version for backward compatibility
+  evaluateSync(values: Record<string, any>): Record<string, any> {
     const results: Record<string, any> = {}
     
     // Sort calculations by dependency order
@@ -60,6 +109,164 @@ export class CalcEngine {
     })
     
     return results
+  }
+
+  private async evaluateAICalculations(values: Record<string, any>, results: Record<string, any>) {
+    for (const aiCalc of this.aiCalculations) {
+      try {
+        // Handle field group scoped calculations
+        if (aiCalc.scope === 'fieldgroup' && aiCalc.fieldGroupKey) {
+          await this.evaluateFieldGroupAICalculation(aiCalc, values, results)
+          continue
+        }
+
+        // Handle global calculations
+        // Check cache first
+        const cacheKey = this.getAICacheKey(aiCalc, values)
+        if (aiCalc.cacheResults && this.aiCache.has(cacheKey)) {
+          const cachedResult = this.aiCache.get(cacheKey)
+          results[aiCalc.id] = cachedResult
+          continue
+        }
+
+        // Prepare field values for the AI calculation
+        const fieldValues: Record<string, any> = {}
+        aiCalc.fieldReferences.forEach(fieldKey => {
+          fieldValues[fieldKey] = values[fieldKey] || results[fieldKey]
+        })
+
+        // Call AI calculation API
+        const response = await fetch('/api/calculate-ai', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            fieldValues,
+            instructions: `${aiCalc.prompt}\n${aiCalc.instructions || ''}`,
+            outputFormat: aiCalc.outputFormat,
+            examples: aiCalc.examples,
+            unitConversion: aiCalc.unitConversion,
+            fallbackValue: aiCalc.fallbackValue
+          })
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          const result = data.result
+          
+          // Cache the result if enabled
+          if (aiCalc.cacheResults) {
+            this.aiCache.set(cacheKey, result)
+          }
+          
+          results[aiCalc.id] = result
+        } else {
+          // Use fallback value if available
+          results[aiCalc.id] = aiCalc.fallbackValue !== undefined ? aiCalc.fallbackValue : null
+        }
+      } catch (error) {
+        console.error(`AI calculation error in ${aiCalc.name}:`, error)
+        results[aiCalc.id] = aiCalc.fallbackValue !== undefined ? aiCalc.fallbackValue : null
+      }
+    }
+  }
+
+  private async evaluateFieldGroupAICalculation(
+    aiCalc: AICalculation, 
+    values: Record<string, any>, 
+    results: Record<string, any>
+  ) {
+    const fieldGroupKey = aiCalc.fieldGroupKey!
+    const fieldGroupValue = values[fieldGroupKey]
+    
+    // If field group doesn't exist or isn't an array, skip
+    if (!fieldGroupValue || !Array.isArray(fieldGroupValue)) {
+      return
+    }
+
+    // Process each instance of the field group
+    const updatedInstances = await Promise.all(
+      fieldGroupValue.map(async (instance, index) => {
+        // Create a unique cache key for this instance
+        const instanceCacheKey = `${aiCalc.id}_${fieldGroupKey}_${index}_${JSON.stringify(instance)}`
+        
+        if (aiCalc.cacheResults && this.aiCache.has(instanceCacheKey)) {
+          const cachedResult = this.aiCache.get(instanceCacheKey)
+          // Find the target field in the AI calculation and update it
+          const targetField = this.getTargetFieldFromAICalc(aiCalc)
+          if (targetField) {
+            return { ...instance, [targetField]: cachedResult }
+          }
+          return instance
+        }
+
+        // Prepare field values from this specific instance
+        const instanceFieldValues: Record<string, any> = {}
+        aiCalc.fieldReferences.forEach(fieldKey => {
+          // Use the value from this specific instance
+          instanceFieldValues[fieldKey] = instance[fieldKey]
+        })
+
+        try {
+          // Call AI calculation API with instance-specific values
+          const response = await fetch('/api/calculate-ai', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              fieldValues: instanceFieldValues,
+              instructions: `${aiCalc.prompt}\n${aiCalc.instructions || ''}`,
+              outputFormat: aiCalc.outputFormat,
+              examples: aiCalc.examples,
+              unitConversion: aiCalc.unitConversion,
+              fallbackValue: aiCalc.fallbackValue
+            })
+          })
+
+          if (response.ok) {
+            const data = await response.json()
+            const result = data.result
+            
+            // Cache the result if enabled
+            if (aiCalc.cacheResults) {
+              this.aiCache.set(instanceCacheKey, result)
+            }
+            
+            // Update the target field in this instance
+            const targetField = this.getTargetFieldFromAICalc(aiCalc)
+            if (targetField) {
+              return { ...instance, [targetField]: result }
+            }
+          }
+        } catch (error) {
+          console.error(`AI calculation error for instance ${index} in ${aiCalc.name}:`, error)
+        }
+
+        return instance
+      })
+    )
+
+    // Update the field group value with calculated results
+    results[fieldGroupKey] = updatedInstances
+  }
+
+  private getTargetFieldFromAICalc(aiCalc: AICalculation): string | null {
+    // Use explicitly defined target field if available
+    if (aiCalc.targetField) {
+      return aiCalc.targetField
+    }
+    // Otherwise, assume the last field reference is the target field
+    if (aiCalc.fieldReferences.length > 0) {
+      return aiCalc.fieldReferences[aiCalc.fieldReferences.length - 1]
+    }
+    return null
+  }
+
+  private getAICacheKey(aiCalc: AICalculation, values: Record<string, any>): string {
+    const relevantValues = aiCalc.fieldReferences.map(key => values[key])
+    return `${aiCalc.id}_${JSON.stringify(relevantValues)}`
   }
 
   private prepareVariables(values: Record<string, any>, calcResults: Record<string, any>) {

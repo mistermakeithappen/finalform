@@ -79,14 +79,29 @@ export const useFormBuilderStore = create<FormBuilderState>((set) => ({
     }
   }),
   
-  removeField: (fieldId) => set((state) => ({
-    schema: {
-      ...state.schema,
-      fields: state.schema.fields.filter(f => f.id !== fieldId)
-    },
-    selectedField: state.selectedField?.id === fieldId ? null : state.selectedField,
-    isDirty: true
-  })),
+  removeField: (fieldId) => set((state) => {
+    // Deep remove for nested fields in field groups
+    const removeFieldRecursive = (fields: FormField[]): FormField[] => {
+      return fields.map(f => {
+        if (f.type === 'fieldgroup' && 'fields' in f && f.fields) {
+          return {
+            ...f,
+            fields: f.fields.filter(child => child.id !== fieldId)
+          }
+        }
+        return f
+      }).filter(f => f.id !== fieldId)
+    }
+
+    return {
+      schema: {
+        ...state.schema,
+        fields: removeFieldRecursive(state.schema.fields)
+      },
+      selectedField: state.selectedField?.id === fieldId ? null : state.selectedField,
+      isDirty: true
+    }
+  }),
   
   selectField: (field) => set({ selectedField: field }),
   

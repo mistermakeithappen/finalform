@@ -122,7 +122,7 @@ export function FormRenderer({
     
     return new LogicEngine(mergedLogic, getAllFieldKeys(schema.fields), hiddenFields)
   })
-  const [calcEngine] = useState(() => new CalcEngine(schema.calculations || []))
+  const [calcEngine] = useState(() => new CalcEngine(schema.calculations || [], schema.aiCalculations || []))
   
   // Split fields into pages based on page breaks
   const pages = useMemo(() => {
@@ -345,26 +345,50 @@ export function FormRenderer({
       return
     }
     
-    const results = calcEngine.evaluate(watchedValues)
-    
-    const updates: Array<[string, any]> = []
-    Object.entries(results).forEach(([key, value]) => {
-      if (watchedValues[key] !== value) {
-        updates.push([key, value])
-      }
-    })
-    
-    // Batch updates
-    if (updates.length > 0) {
-      isUpdatingRef.current = true
-      Promise.resolve().then(() => {
-        updates.forEach(([key, value]) => {
-          setValue(key, value, { shouldValidate: false })
+    // Use async evaluation if there are AI calculations
+    if (schema.aiCalculations && schema.aiCalculations.length > 0) {
+      calcEngine.evaluate(watchedValues).then(results => {
+        const updates: Array<[string, any]> = []
+        Object.entries(results).forEach(([key, value]) => {
+          if (watchedValues[key] !== value) {
+            updates.push([key, value])
+          }
         })
-        isUpdatingRef.current = false
+        
+        // Batch updates
+        if (updates.length > 0) {
+          isUpdatingRef.current = true
+          Promise.resolve().then(() => {
+            updates.forEach(([key, value]) => {
+              setValue(key, value, { shouldValidate: false })
+            })
+            isUpdatingRef.current = false
+          })
+        }
       })
+    } else {
+      // Use synchronous evaluation for regular calculations only
+      const results = calcEngine.evaluateSync(watchedValues)
+      
+      const updates: Array<[string, any]> = []
+      Object.entries(results).forEach(([key, value]) => {
+        if (watchedValues[key] !== value) {
+          updates.push([key, value])
+        }
+      })
+      
+      // Batch updates
+      if (updates.length > 0) {
+        isUpdatingRef.current = true
+        Promise.resolve().then(() => {
+          updates.forEach(([key, value]) => {
+            setValue(key, value, { shouldValidate: false })
+          })
+          isUpdatingRef.current = false
+        })
+      }
     }
-  }, [watchedValues, calcEngine, setValue])
+  }, [watchedValues, calcEngine, setValue, schema.aiCalculations])
 
   // Handle field change callback
   useEffect(() => {

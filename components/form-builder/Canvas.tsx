@@ -177,6 +177,8 @@ export function Canvas({
                       }}
                       testValues={testValues}
                       onTestValueChange={onTestValueChange}
+                      onSelectChildField={(childField) => onSelectField(childField)}
+                      selectedChildField={selectedField}
                     />
                   </div>
                 )

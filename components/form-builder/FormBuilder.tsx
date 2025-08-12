@@ -42,6 +42,7 @@ import { SaveIndicator, SaveIndicatorMini } from './SaveIndicator'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { sanitizeFieldKey, generateFieldKey } from '@/lib/utils/field-utils'
 
 interface FormBuilderProps {
   formId?: string
@@ -293,15 +294,48 @@ export function FormBuilder({
 
   const createFieldFromType = (type: FieldType): FormField => {
     const id = `field_${Date.now()}`
+    const existingKeys = schema.fields.map(f => f.key)
     
     // Count existing page breaks to determine the page number
     const pageBreakCount = schema.fields.filter(f => f.type === 'pagebreak').length
     const pageNumber = pageBreakCount + 2 // +2 because page 1 is implicit, and we're adding a new break
     
+    // Generate appropriate default label and key based on field type
+    const getDefaultLabelAndKey = (fieldType: FieldType) => {
+      const typeLabels: Record<string, string> = {
+        text: 'Text Field',
+        email: 'Email',
+        phone: 'Phone',
+        number: 'Number',
+        currency: 'Amount',
+        textarea: 'Text Area',
+        select: 'Select Option',
+        multiselect: 'Multiple Choice',
+        radio: 'Radio Choice',
+        checkbox: 'Checkbox',
+        toggle: 'Toggle',
+        date: 'Date',
+        time: 'Time',
+        datetime: 'Date & Time',
+        file: 'File Upload',
+        signature: 'Signature',
+        rating: 'Rating',
+        slider: 'Slider',
+        hidden: 'Hidden Field',
+        address: 'Address',
+      }
+      
+      const label = typeLabels[fieldType] || `New ${fieldType} field`
+      const key = generateFieldKey(label, existingKeys)
+      return { label, key }
+    }
+    
+    const { label: defaultLabel, key: defaultKey } = getDefaultLabelAndKey(type)
+    
     const baseField = {
       id,
-      key: `field_${schema.fields.length + 1}`,
-      label: `New ${type} field`,
+      key: defaultKey,
+      label: defaultLabel,
       type,
     }
 
@@ -386,25 +420,41 @@ export function FormBuilder({
         } as FormField
       
       case 'headline':
+        const headlineText = 'New Headline'
         return {
-          ...baseField,
+          id,
           type: 'headline',
-          text: 'New Headline',
+          key: generateFieldKey(headlineText, existingKeys),
+          label: headlineText, // Use the text as the label
+          text: headlineText,
           level: 'h2',
           alignment: 'left'
         } as FormField
       
       case 'image':
+        const imageAltText = 'Image'
         return {
-          ...baseField,
+          id,
           type: 'image',
-          label: 'Image',
+          key: generateFieldKey('image', existingKeys),
+          label: imageAltText, // Use the alt text as the label initially
           imageUrl: '',
-          altText: 'Image description',
+          altText: imageAltText,
           imageWidth: 'auto',
           imageHeight: 'auto',
           alignment: 'center',
           caption: ''
+        } as FormField
+      
+      case 'html':
+        const htmlContent = '<p>HTML Content</p>'
+        const htmlLabel = 'HTML Content'
+        return {
+          id,
+          type: 'html',
+          key: generateFieldKey(htmlLabel, existingKeys),
+          label: htmlLabel, // Use a descriptive label
+          content: htmlContent
         } as FormField
       
       case 'section':

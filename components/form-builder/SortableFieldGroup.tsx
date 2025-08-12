@@ -21,6 +21,8 @@ interface SortableFieldGroupProps {
   onDuplicate?: () => void
   testValues?: Record<string, any>
   onTestValueChange?: (fieldId: string, value: any) => void
+  onSelectChildField?: (field: FormField) => void
+  selectedChildField?: FormField | null
 }
 
 interface SortableFieldItemProps {
@@ -100,13 +102,17 @@ function InternalSortableFieldItem({
       <div
         ref={setNodeRef}
         style={style}
+        data-field-item="true"
         className={cn(
           "relative group",
           isDragging && "opacity-50 z-50"
         )}
       >
         <div
-          onClick={onSelect}
+          onClick={(e) => {
+            e.stopPropagation() // Stop the click from bubbling to the field group
+            onSelect()
+          }}
           className={cn(
             "relative rounded-md transition-all cursor-pointer",
             isSelected && "ring-1 ring-primary ring-offset-1",
@@ -169,7 +175,9 @@ export function SortableFieldGroup({
   onUpdate,
   onDuplicate,
   testValues = {},
-  onTestValueChange
+  onTestValueChange,
+  onSelectChildField,
+  selectedChildField
 }: SortableFieldGroupProps) {
   const [selectedChildId, setSelectedChildId] = useState<string | null>(null)
 
@@ -291,8 +299,12 @@ export function SortableFieldGroup({
     onUpdate({ ...field, fields: newFields })
   }
 
-  const selectChildField = (childId: string) => {
-    setSelectedChildId(childId)
+  const selectChildField = (childField: FormField) => {
+    setSelectedChildId(childField.id)
+    // Call the parent's child field selector if provided
+    if (onSelectChildField) {
+      onSelectChildField(childField)
+    }
   }
 
   // Default duplicate handler if not provided
@@ -312,7 +324,14 @@ export function SortableFieldGroup({
       <div
         ref={setNodeRef}
         style={style}
-        onClick={onSelect}
+        onClick={(e) => {
+          // Only select the group if the click is on the group itself, not on child fields
+          if (e.target === e.currentTarget || 
+              e.currentTarget.contains(e.target as Node) && 
+              !(e.target as HTMLElement).closest('[data-field-item]')) {
+            onSelect()
+          }
+        }}
         className={cn(
           "relative rounded-lg transition-all",
           isDragging && "opacity-50 z-50",
@@ -325,7 +344,13 @@ export function SortableFieldGroup({
         isOver && "bg-red-50",
         !isOver && "bg-background"
       )}>
-        <CardHeader className="pb-3">
+        <CardHeader 
+          className="pb-3 cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation()
+            onSelect()
+          }}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {/* Drag handle for the entire field group */}
@@ -376,8 +401,8 @@ export function SortableFieldGroup({
                           onRemove={() => removeChildField(fieldIndex)}
                           onUpdate={(updatedField) => updateChildField(fieldIndex, updatedField)}
                           onDuplicate={() => duplicateChildField(fieldIndex)}
-                          onSelect={() => selectChildField(childField.id)}
-                          isSelected={selectedChildId === childField.id}
+                          onSelect={() => selectChildField(childField)}
+                          isSelected={selectedChildField?.id === childField.id}
                           testValue={testValues[childField.id]}
                           onTestValueChange={onTestValueChange}
                         />
@@ -390,11 +415,17 @@ export function SortableFieldGroup({
           )}
           
           {/* Drop zone for adding new fields */}
-          <div className={cn(
-            "flex items-center justify-center py-8 px-4 rounded-md border-2 border-dashed transition-colors",
-            isOver ? "border-primary bg-primary/5" : "border-muted-foreground/20",
-            field.fields.length === 0 ? "" : "mt-2"
-          )}>
+          <div 
+            className={cn(
+              "flex items-center justify-center py-8 px-4 rounded-md border-2 border-dashed transition-colors cursor-pointer",
+              isOver ? "border-primary bg-primary/5" : "border-muted-foreground/20",
+              field.fields.length === 0 ? "" : "mt-2"
+            )}
+            onClick={(e) => {
+              e.stopPropagation()
+              onSelect()
+            }}
+          >
             <p className="text-sm text-muted-foreground text-center">
               {isOver ? "Drop field here" : field.fields.length === 0 ? "Drag fields here to group them" : "Drag more fields here"}
             </p>

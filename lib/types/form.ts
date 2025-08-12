@@ -73,6 +73,7 @@ export interface BaseField {
   visibility?: FieldVisibility
   conditions?: LogicRule[]
   calculation?: string
+  aiCalculation?: AICalculation
   grid?: GridConfig
   width?: FieldWidth
   default?: any
@@ -349,6 +350,28 @@ export interface Calculation {
   }>
 }
 
+export interface AICalculation {
+  id: string
+  name: string
+  prompt: string
+  fieldReferences: string[]
+  targetField?: string // The field that will receive the calculated value
+  instructions?: string
+  examples?: Array<{
+    inputs: Record<string, any>
+    expectedOutput: any
+  }>
+  outputFormat?: 'number' | 'currency' | 'percentage' | 'text' | 'fraction' | 'measurement'
+  unitConversion?: {
+    from?: string
+    to?: string
+  }
+  cacheResults?: boolean
+  fallbackValue?: any
+  scope?: 'global' | 'fieldgroup' // Indicates if this calculation is scoped to a field group
+  fieldGroupKey?: string // The key of the field group this calculation belongs to
+}
+
 export interface FormTheme {
   primaryColor?: string
   accentColor?: string
@@ -378,6 +401,7 @@ export interface FormSchema {
   fields: FormField[]
   logic?: LogicRule[]
   calculations?: Calculation[]
+  aiCalculations?: AICalculation[]
   theme?: FormTheme
   prefill?: FormPrefill
   settings?: {
